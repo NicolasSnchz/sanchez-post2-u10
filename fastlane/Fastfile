@@ -2,11 +2,15 @@
 
 platform :android do
   before_all do
-    begin
-      codes = google_play_track_version_codes(track: "internal")
-      @version_code = codes.max.to_i + 1
-    rescue
+    if ENV["CI_DEMO_MODE"] == "true"
       @version_code = ENV.fetch("VERSION_CODE", "1").to_i
+    else
+      begin
+        codes = google_play_track_version_codes(track: "internal")
+        @version_code = codes.max.to_i + 1
+      rescue
+        @version_code = ENV.fetch("VERSION_CODE", "1").to_i
+      end
     end
   end
 
@@ -24,14 +28,18 @@ platform :android do
       }
     )
 
-    upload_to_play_store(
-      track: "internal",
-      aab: lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH],
-      release_status: "completed",
-      skip_upload_metadata: true,
-      skip_upload_images: true,
-      skip_upload_screenshots: true
-    )
+    if ENV["CI_DEMO_MODE"] == "true"
+      UI.success("CI demo mode: bundle release generado sin subir a Play Store")
+    else
+      upload_to_play_store(
+        track: "internal",
+        aab: lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH],
+        release_status: "completed",
+        skip_upload_metadata: true,
+        skip_upload_images: true,
+        skip_upload_screenshots: true
+      )
+    end
   end
 
   desc "Publicar en produccion con staged rollout al 5%"

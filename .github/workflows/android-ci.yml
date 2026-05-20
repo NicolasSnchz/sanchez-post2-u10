@@ -1,4 +1,4 @@
-﻿name: Android CI/CD
+﻿name: Android Fastlane CD
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
     branches: [ main ]
 
 jobs:
-  lint-test-quality:
-    name: Lint, pruebas unitarias y cobertura
+  lint-test:
+    name: Lint y pruebas unitarias
     runs-on: ubuntu-latest
 
     steps:
@@ -23,16 +23,6 @@ jobs:
 
       - name: Configurar permisos de Gradle
         run: chmod +x ./gradlew
-
-      - name: Cache de Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
 
       - name: Ejecutar lint
         run: ./gradlew lintDebug
@@ -43,40 +33,20 @@ jobs:
       - name: Ejecutar quality gate de cobertura
         run: ./gradlew jacocoTestCoverageVerification
 
-      - name: Subir reportes de pruebas
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: unit-test-results
-          path: app/build/reports/tests/
-
-      - name: Subir reporte de lint
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: lint-results
-          path: app/build/reports/lint-results-debug.html
-
-      - name: Subir reporte de cobertura
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-report
-          path: app/build/reports/jacoco/
-
-  build-and-distribute:
-    name: Build firmado y distribucion Firebase
+  fastlane-beta:
+    name: Fastlane beta
     runs-on: ubuntu-latest
-    needs: lint-test-quality
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: lint-test
+    if: github.ref == 'refs/heads/main'
 
     env:
+      CI_DEMO_MODE: 'true'
+      VERSION_CODE: ${{ github.run_number }}
       KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
       KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
       KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
       KEY_PASS: ${{ secrets.KEY_PASS }}
-      FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
-      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      PLAY_CREDENTIALS_BASE64: ${{ secrets.PLAY_CREDENTIALS_BASE64 }}
 
     steps:
       - name: Descargar repositorio
@@ -88,6 +58,12 @@ jobs:
           java-version: '17'
           distribution: temurin
 
+      - name: Configurar Ruby 3.2
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
       - name: Configurar permisos de Gradle
         run: chmod +x ./gradlew
 
@@ -97,7 +73,7 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > release-key.jks
           echo "KEYSTORE_PATH=$PWD/release-key.jks" >> $GITHUB_ENV
 
-      - name: Crear Keystore temporal si no existen secrets
+      - name: Crear Keystore temporal para CI
         if: env.KEYSTORE_BASE64 == ''
         run: |
           keytool -genkeypair -v \
@@ -114,21 +90,14 @@ jobs:
           echo "KEY_ALIAS=ci-demo" >> $GITHUB_ENV
           echo "KEY_PASS=android" >> $GITHUB_ENV
 
-      - name: Compilar APK release firmado
-        run: ./gradlew assembleRelease
+      - name: Decodificar credenciales de Play Console
+        if: env.PLAY_CREDENTIALS_BASE64 != ''
+        run: |
+          mkdir -p fastlane
+          echo "$PLAY_CREDENTIALS_BASE64" | base64 -d > fastlane/google-play-credentials.json
 
-      - name: Subir APK firmado como artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: signed-release-apk
-          path: app/build/outputs/apk/release/app-release.apk
+      - name: Listar lanes de Fastlane
+        run: bundle exec fastlane lanes
 
-      - name: Distribuir en Firebase App Distribution
-        if: env.FIREBASE_APP_ID != '' && env.FIREBASE_TOKEN != ''
-        uses: wzieba/Firebase-Distribution-Github-Action@v1
-        with:
-          appId: ${{ secrets.FIREBASE_APP_ID }}
-          token: ${{ secrets.FIREBASE_TOKEN }}
-          groups: testers
-          file: app/build/outputs/apk/release/app-release.apk
-          releaseNotes: Build ${{ github.run_number }} - ${{ github.sha }}
+      - name: Ejecutar Fastlane beta
+        run: bundle exec fastlane beta
