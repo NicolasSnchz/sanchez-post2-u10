@@ -1,0 +1,69 @@
+﻿default_platform(:android)
+
+platform :android do
+  before_all do
+    begin
+      codes = google_play_track_version_codes(track: "internal")
+      @version_code = codes.max.to_i + 1
+    rescue
+      @version_code = ENV.fetch("VERSION_CODE", "1").to_i
+    end
+  end
+
+  desc "Distribuir build de prueba a Internal Testing"
+  lane :beta do
+    gradle(
+      task: "bundle",
+      build_type: "Release",
+      properties: {
+        "android.injected.signing.store.file" => ENV["KEYSTORE_PATH"],
+        "android.injected.signing.store.password" => ENV["KEYSTORE_PASS"],
+        "android.injected.signing.key.alias" => ENV["KEY_ALIAS"],
+        "android.injected.signing.key.password" => ENV["KEY_PASS"],
+        "versionCode" => @version_code
+      }
+    )
+
+    upload_to_play_store(
+      track: "internal",
+      aab: lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH],
+      release_status: "completed",
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+
+  desc "Publicar en produccion con staged rollout al 5%"
+  lane :production do
+    gradle(
+      task: "bundle",
+      build_type: "Release",
+      properties: {
+        "android.injected.signing.store.file" => ENV["KEYSTORE_PATH"],
+        "android.injected.signing.store.password" => ENV["KEYSTORE_PASS"],
+        "android.injected.signing.key.alias" => ENV["KEY_ALIAS"],
+        "android.injected.signing.key.password" => ENV["KEY_PASS"],
+        "versionCode" => @version_code
+      }
+    )
+
+    upload_to_play_store(
+      track: "production",
+      rollout: "0.05",
+      aab: lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH],
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+
+  desc "Promover de internal a beta"
+  lane :promote_to_beta do
+    upload_to_play_store(
+      track: "internal",
+      track_promote_to: "beta",
+      rollout: "1.0"
+    )
+  end
+end
